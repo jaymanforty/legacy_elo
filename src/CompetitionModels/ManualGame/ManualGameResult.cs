@@ -29,5 +29,7 @@ namespace ELO.Models
 
         public virtual ICollection<ManualGameScoreUpdate> ScoreUpdates { get; set; }
 
+        public int Difference { get; set; } = 0;
+
     }
 }

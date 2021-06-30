@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using ELO.Extensions;
+using ELO.Models;
 
 namespace ELO.Handlers
 {
@@ -34,6 +35,8 @@ namespace ELO.Handlers
             CommandSchedule.Service = provider.GetRequiredService<CommandService>();
             Client.Log += async x => BaseLogger.Log(x.Message, x.Severity);
             BaseLogger.Message += async (x, y) => Logger.Log(x, y);
+
+            DoExpireCheckLoop();
         }
 
         private SemaphoreSlim userdownloadSem = new SemaphoreSlim(1);
@@ -544,6 +547,51 @@ namespace ELO.Handlers
                 {
                     BaseLogger.Log("Issue logging command error messages to channel.\n" + e.ToString(), context, LogSeverity.Error);
                 }
+            }
+        }
+
+        public virtual async Task CheckForExpiredPlayers()
+        {
+            using (var db = new Database())
+            {
+                var allQueue = db.GetAllQueuedPlayers().ToList();
+
+                foreach (QueuedPlayer player in allQueue)
+                {
+                    //Subtract 5 minutes from the specified expire time so that users get removed before their exact time rather than after.
+                    if (DateTime.UtcNow >= player.ExpireAt.Subtract(TimeSpan.Parse("00:05:00"))) 
+                    {
+                        var playerQueues = db.QueuedPlayers.AsQueryable().Where(x => x.UserId == player.UserId).ToList();
+
+                        //Removes the player from all Queues
+                        foreach(QueuedPlayer playerQueue in playerQueues)
+                        {
+                            db.QueuedPlayers.Remove(playerQueue);
+                            db.SaveChanges();
+                        }
+
+                        var guild = Client.GetGuild(player.GuildId);
+
+                        var user = guild.GetUser(player.UserId);
+
+                        ISocketMessageChannel channel = guild.GetChannel(player.ChannelId) as ISocketMessageChannel;
+
+                        var queue = db.GetQueuedPlayers(player.GuildId, player.ChannelId).ToList();
+                        var lobby = db.GetLobby(channel);
+
+                        await channel.SendMessageAsync(user.Mention, false, $"**[{queue.Count}/{lobby.PlayersPerTeam*2}]**\nYou have been auto removed from all queues.".QuickEmbed(Color.Blue));
+                    }
+                }
+            }
+        }
+
+        public virtual async Task DoExpireCheckLoop()
+        {
+            while (true)
+            {
+                Logger.Log($"[INFO][{DateTime.UtcNow}] Checking for expired user queues. ", LogSeverity.Info);
+                await CheckForExpiredPlayers();
+                await Task.Delay(300000);
             }
         }
     }

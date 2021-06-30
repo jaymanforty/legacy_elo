@@ -26,7 +26,7 @@ namespace ELO.Modules
 
         [Command("Duo", RunMode = RunMode.Sync)]
         [Summary("Join the queue with another user in the current lobby.")]
-        [RequirePermission(PermissionLevel.Registered)]
+        [RequirePermission(PermissionLevel.ELOAdmin)]
         public virtual async Task JoinLobbyAsync(SocketGuildUser user)
         {
             using (var db = new Database())
@@ -208,7 +208,7 @@ namespace ELO.Modules
 
         [Command("Party", RunMode = RunMode.Sync)]
         [Summary("Check you current party info.")]
-        [RequirePermission(PermissionLevel.Registered)]
+        [RequirePermission(PermissionLevel.ELOAdmin)]
         public virtual async Task PartyInfoAsync()
         {
             using (var db = new Database())
@@ -235,7 +235,7 @@ namespace ELO.Modules
 
         [Command("Parties", RunMode = RunMode.Sync)]
         [Summary("Check you current party info.")]
-        [RequirePermission(PermissionLevel.Registered)]
+        [RequirePermission(PermissionLevel.ELOAdmin)]
         public virtual async Task PartiesInfoAsync()
         {
             using (var db = new Database())

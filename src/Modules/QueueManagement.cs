@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading.Tasks;
 using ELO.Preconditions;
 using Microsoft.EntityFrameworkCore;
+using ELO.Models;
 
 namespace ELO.Modules
 {
@@ -48,6 +49,12 @@ namespace ELO.Modules
                 if (lobby == null)
                 {
                     await Context.SimpleEmbedAsync("This channel is not a lobby.");
+                    return;
+                }
+
+                if (lobby.IsLocked)
+                {
+                    await Context.SimpleEmbedAsync("This lobby is frozen!");
                     return;
                 }
 
@@ -202,25 +209,13 @@ namespace ELO.Modules
                 }
                 else
                 {
-                    if (Premium.IsPremiumSimple(Context.Guild.Id))
+                    if (Context.User.Id == Context.Guild.OwnerId)
                     {
-                        if (Context.User.Id == Context.Guild.OwnerId)
-                        {
-                            await Context.SimpleEmbedAsync($"**[{queue.Count + 1}/{lobby.PlayersPerTeam * 2}]** {Context.User.Mention} [{player.Points}] joined the queue.", Color.Green);
-                        }
-                        else
-                        {
-                            await Context.SimpleEmbedAsync($"**[{queue.Count + 1}/{lobby.PlayersPerTeam * 2}]** {(comp.NameFormat.Contains("score") ? $"{Context.User.Mention}" : $"{Context.User.Mention} [{player.Points}]")} joined the queue.", Color.Green);
-                        }
+                        await Context.SimpleEmbedAsync($"**[{queue.Count + 1}/{lobby.PlayersPerTeam * 2}]** {Context.User.Mention} [{player.Points}] joined the queue.", Color.Green);
                     }
                     else
                     {
-                        await ReplyAsync("", false, new EmbedBuilder
-                        {
-                            Description = $"**[{queue.Count + 1}/{lobby.PlayersPerTeam * 2}]** {(comp.NameFormat.Contains("score") ? $"{Context.User.Mention}" : $"{Context.User.Mention} [{player.Points}]")} joined the queue.\n" +
-                                          $"[Get Premium to remove ELO bot branding]({Premium.PremiumConfig.ServerInvite})",
-                            Color = Color.Green
-                        }.Build());
+                        await Context.SimpleEmbedAsync($"**[{queue.Count + 1}/{lobby.PlayersPerTeam * 2}]** {(comp.NameFormat.Contains("score") ? $"{Context.User.Mention}" : $"{Context.User.Mention} [{player.Points}]")} joined the queue.", Color.Green);
                     }
                 }
 
@@ -285,23 +280,173 @@ namespace ELO.Modules
                     }
                     else
                     {
-                        if (Premium.IsPremiumSimple(Context.Guild.Id))
-                        {
-                            await Context.SimpleEmbedAsync($"**[{queue.Count - 1}/{lobby.PlayersPerTeam * 2}]** {Context.User.Mention} [{player.Points}] left the queue.", Color.DarkBlue);
-                        }
-                        else
-                        {
-                            await ReplyAsync("", false, new EmbedBuilder
-                            {
-                                Description = $"**[{queue.Count - 1}/{lobby.PlayersPerTeam * 2}]** {Context.User.Mention} [{player.Points}] left the queue.\n" +
-                                $"[Get Premium to remove ELO bot branding]({Premium.PremiumConfig.ServerInvite})",
-                                Color = Color.DarkBlue
-                            }.Build());
-                        }
+                        await Context.SimpleEmbedAsync($"**[{queue.Count - 1}/{lobby.PlayersPerTeam * 2}]** {Context.User.Mention} [{player.Points}] left the queue.", Color.DarkBlue);
+                        
                     }
                 }
             }
         }
+
+        [Command("Expire", RunMode = RunMode.Async)]
+        [RequirePermission(PermissionLevel.Registered)]
+        [Summary("Expire your queue after a certain time period")]
+        public virtual async Task Expire(string timeStr = null)
+        {
+
+            //If no time entered tell the user when their queues will expire by looping through all their queues and finding the soonest expire time
+            if (timeStr == null)
+            {
+                using (var db = new Database())
+                {
+                    var playerQueues = db.QueuedPlayers.AsQueryable().Where(x => x.UserId == Context.User.Id);
+                    var soonestTime = DateTime.UtcNow.AddHours(24);
+
+                    if (playerQueues.Count() > 0)
+                    {
+                        foreach (QueuedPlayer player in playerQueues)
+                        {
+                            if (player.ExpireAt < soonestTime)
+                            {
+                                soonestTime = player.ExpireAt;
+                            }
+                        }
+
+                        TimeSpan timeToExpire = soonestTime.Subtract(DateTime.UtcNow);
+
+                        await Context.Channel.SendMessageAsync(null, false, $"Your queues will expire in **{timeToExpire.Hours}h{timeToExpire.Minutes}m**".QuickEmbed(Color.Blue));
+                    }
+                    else
+                    {
+                        await Context.Channel.SendMessageAsync(null, false, $"No Queues found!".QuickEmbed(Color.Red));
+                    }
+                }
+                return;
+            }
+
+            //Set the user's Expire time to entered string
+            try
+            {
+                TimeSpan expireTime = TimeSpan.Parse(timeStr);
+
+                //TODO: Configurable default times
+                if (expireTime.TotalMinutes < 10)
+                {
+                    await Context.Channel.SendMessageAsync(null, false, "Minimum is 10 minutes!".QuickEmbed(Color.Red));
+                    return;
+                }
+                if(expireTime.TotalMinutes > 240)
+                {
+                    await Context.Channel.SendMessageAsync(null, false, "Maximum is 4 hours!".QuickEmbed(Color.Red));
+                    return;
+                }
+
+                using (var db = new Database())
+                {
+                    var playerQueues = db.QueuedPlayers.AsQueryable().Where(x => x.UserId == Context.User.Id);
+
+                    foreach (QueuedPlayer player in playerQueues)
+                    {
+                        player.ExpireAt = DateTime.UtcNow.Add(expireTime);
+                        db.QueuedPlayers.Update(player);
+                    }
+
+                    if (playerQueues.Count() > 0)
+                    {
+                        await Context.Channel.SendMessageAsync(null, false, $"Your queues will expire in **{expireTime.Hours}h{expireTime.Minutes}m**".QuickEmbed(Color.Blue));
+                    }
+                    else
+                    {
+                        await Context.Channel.SendMessageAsync(null, false, $"No Queues found!".QuickEmbed(Color.Red));
+                    }
+
+                    db.SaveChanges();
+                }
+
+
+            }
+            catch (FormatException)
+            {
+                await Context.Channel.SendMessageAsync(null, false, "Syntax Error, must be in format `{hh:mm}`".QuickEmbed(Color.Red));
+                return;
+            }
+
+            
+        }
+
+        [Command("FreezeQueue", RunMode = RunMode.Async)]
+        [Alias("Freeze")]
+        [RequirePermission(PermissionLevel.Moderator)]
+        [Summary("Freeze the specified lobby to disallow players from joining")]
+        public virtual async Task FreezeQueueAsync(ISocketMessageChannel channel = null)
+        {
+            if (channel == null)
+            {
+                channel = Context.Channel;
+            }
+
+            using (var db = new Database())
+            {
+
+                var lobby = db.Lobbies.FirstOrDefault(x => x.ChannelId == channel.Id);
+                if (lobby == null)
+                {
+                    await Context.SimpleEmbedAsync("This channel is not a lobby.");
+                    return;
+                }
+
+                if (lobby.IsLocked)
+                {
+                    await Context.SimpleEmbedAsync("This lobby is already frozen!");
+                    return;
+                }
+
+                lobby.IsLocked = true;
+
+                db.Lobbies.Update(lobby);
+
+                db.SaveChanges();
+
+                await Context.SimpleEmbedAsync($"<#{channel.Id}> queue is now frozen!");
+            }
+        }
+
+        [Command("UnFreezeQueue", RunMode = RunMode.Async)]
+        [Alias("UnFreeze")]
+        [RequirePermission(PermissionLevel.Moderator)]
+        [Summary("Freeze the specified lobby to disallow players from joining")]
+        public virtual async Task UnFreezeQueueAsync(ISocketMessageChannel channel = null)
+        {
+            if (channel == null)
+            {
+                channel = Context.Channel;
+            }
+
+            using (var db = new Database())
+            {
+
+                var lobby = db.Lobbies.FirstOrDefault(x => x.ChannelId == channel.Id);
+                if (lobby == null)
+                {
+                    await Context.SimpleEmbedAsync("This channel is not a lobby.");
+                    return;
+                }
+
+                if (!lobby.IsLocked)
+                {
+                    await Context.SimpleEmbedAsync("This lobby is already unfrozen!");
+                    return;
+                }
+
+                lobby.IsLocked = false;
+
+                db.Lobbies.Update(lobby);
+
+                db.SaveChanges();
+
+                await Context.SimpleEmbedAsync($"<#{channel.Id}> queue is now unfrozen!");
+            }
+        }
+
 
         [Command("Map", RunMode = RunMode.Async)]
         [RequirePermission(PermissionLevel.Moderator)]

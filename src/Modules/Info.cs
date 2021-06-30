@@ -16,6 +16,11 @@ using System.Text;
 using System.Threading.Tasks;
 using ELO.Extensions;
 using ELO.Services.Reactive;
+using System.Collections.Generic;
+using System.Net;
+using System.IO;
+using Newtonsoft.Json;
+using QuickChart;
 
 namespace ELO.Modules
 {
@@ -190,11 +195,250 @@ namespace ELO.Modules
             }
         }
 
+        //history
+        [Command("History", RunMode = RunMode.Async)]
+        [Summary("Plot a chart of the players history regarding rank")]
+        [RequirePermission(PermissionLevel.Registered)]
+        public virtual async Task HistoryAsync(SocketGuildUser user = null)
+        {
+            if (user == null)
+            {
+                user = Context.User as SocketGuildUser;
+            }
+
+            using (var db = new Database())
+            {
+
+                var playerTeams = db.TeamPlayers.AsQueryable().Where(x => x.ChannelId == Context.Channel.Id && x.UserId == user.Id).OrderByDescending(x => x.GameNumber).ToArray();
+                var player = db.Players.FirstOrDefault(x => x.UserId == user.Id && x.GuildId == Context.Guild.Id);
+                var playerStartingRank = player.Points;
+                List<int> rankHistory = new List<int> {player.Points};
+                List<int> gameLabel = new List<int> { };
+
+                if (playerTeams == null)
+                {
+                    await Context.Channel.SendMessageAsync(null, false, $"{user.Id} has not played any games!".QuickEmbed(Color.Red));
+                    return;
+                }
+
+                foreach (var team in playerTeams)
+                {
+                    var game = db.GameResults.FirstOrDefault(x => x.GameId == team.GameNumber);
+
+                    if (game.GameState != GameState.Canceled && game.GameState != GameState.Undecided)
+                    {
+                        var scoreUpdate = db.GetScoreUpdate(game.GuildId, game.LobbyId, game.GameId, user.Id);
+
+                        playerStartingRank -= scoreUpdate != null ? scoreUpdate.ModifyAmount : 0;
+                        rankHistory.Insert(0, playerStartingRank);
+
+                    }
+                }
+
+                for (int i = 0; i < rankHistory.Count; i++)
+                {
+                    gameLabel.Add(i);
+                }
+
+                Chart qc = new Chart
+                {
+                    Width = 500,
+                    Height = 300,
+                    Config = @"{
+                                type: 'line',
+                                data: {
+                                    labels: [" + String.Join(",", gameLabel.ToArray()) + @"],
+                                    datasets: [{
+                                        label: 'Rank',
+                                        data: [" + String.Join(",", rankHistory.ToArray()) + @"],
+                                        fill: false,
+                                        borderColor: " + "\"rgb(75, 192, 192)\"" + @",
+                                        tension: 0.1
+                                        }]
+                               },
+                               options: {
+                                    scales: {
+                                        yAxes: [{
+                                            ticks: {
+                                                min: " + (rankHistory.Min() - 5).ToString() + @",
+                                                max: " + (rankHistory.Max() + 5).ToString() + @",
+                                                stepSize: 5
+                                            }
+                                        }]
+                                    }
+                               }
+                              }"
+                };
+
+                await Context.Channel.SendMessageAsync(qc.GetShortUrl());
+            }
+
+        }
+
+        //infoagainst
+        [Command("ProfileAgainst", RunMode = RunMode.Async)] // Please make default command name "Stats"
+        [Alias("InfoAgainst", "GetUserAgainst")]
+        [Summary("Displays information about you playing with the specified user(s)")]
+        [RequirePermission(PermissionLevel.Registered)]
+        public virtual async Task ProfileAgainstAsync(SocketGuildUser user1 = null, SocketGuildUser user2 = null)
+        {
+            if (user2 == null)
+            {
+                user2 = user1;
+                user1 = Context.User as SocketGuildUser;
+            }
+
+            using (var db = new Database())
+            {
+                var player1 = db.Players.Find(Context.Guild.Id, user1.Id);
+                var player2 = db.Players.Find(Context.Guild.Id, user2.Id);
+
+                if (player1 == null)
+                {
+                    await Context.Channel.SendMessageAsync(null, false, $"{user1.Mention} not found!".QuickEmbed(Color.Red));
+                    return;
+                }
+                else if (player2 == null)
+                {
+                    await Context.Channel.SendMessageAsync(null, false, $"{user2.Mention} not found!".QuickEmbed(Color.Red));
+                    return;
+                }
+
+                var player1Teams = db.TeamPlayers.AsQueryable().Where(x => x.ChannelId == Context.Channel.Id && user1.Id == x.UserId).ToHashSet();
+                var player2Teams = db.TeamPlayers.AsQueryable().Where(x => x.ChannelId == Context.Channel.Id && user2.Id == x.UserId).ToHashSet();
+
+                var gameResults = db.GameResults.AsQueryable().Where(x => x.LobbyId == Context.Channel.Id).ToHashSet();
+
+                var wins = 0;
+                var losses = 0;
+                var draws = 0;
+
+                // loop through lists
+                foreach (TeamPlayer team1 in player1Teams)
+                {
+                    foreach (TeamPlayer team2 in player2Teams)
+                    {
+                        //When the game number is the same between the teams and the teamnumber is different, this means they were against eachother
+                        if (team1.GameNumber == team2.GameNumber && team1.TeamNumber != team2.TeamNumber)
+                        {
+                            GameResult gameResult = gameResults.FirstOrDefault(x => x.GameId == team1.GameNumber);
+
+                            if (gameResult == null)
+                            {
+                                await Context.Channel.SendMessageAsync(null, false, $"{user1.Mention} and {user2.Mention} have not played against eachother".QuickEmbed(Color.Red));
+                                return;
+                            }
+
+                            if (gameResult.GameState != GameState.Canceled && gameResult.GameState != GameState.Undecided)
+                            {
+                                if (gameResult.WinningTeam == team1.TeamNumber)
+                                {
+                                    wins++;
+                                }
+                                else if (gameResult.WinningTeam == -1)
+                                {
+                                    draws++;
+                                }
+                                else
+                                {
+                                    losses++;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                await Context.Channel.SendMessageAsync(null, false, $"{user1.Mention} **against** {user2.Mention}\n\nWins: {wins}\nLosses: {losses}\nDraws: {draws}".QuickEmbed(Color.Blue));
+
+            }
+        }
+
+        //infowith
+        [Command("ProfileWith", RunMode = RunMode.Async)] // Please make default command name "Stats"
+        [Alias("InfoWith", "GetUserWith")]
+        [Summary("Displays information about you playing with the specified user(s)")]
+        [RequirePermission(PermissionLevel.Registered)]
+        public virtual async Task ProfileWithAsync(SocketGuildUser user1, SocketGuildUser user2 = null)
+        {
+            if (user2 == null)
+            {
+                user2 = user1;
+                user1 = Context.User as SocketGuildUser;
+            }
+
+            using (var db = new Database())
+            {
+                var player1 = db.Players.Find(Context.Guild.Id, user1.Id);
+                var player2 = db.Players.Find(Context.Guild.Id, user2.Id);
+
+                if(player1 == null)
+                {
+                    await Context.Channel.SendMessageAsync(null, false, $"{user1.Mention} not found!".QuickEmbed(Color.Red));
+                    return;
+                }
+                else if (player2 == null)
+                {
+                    await Context.Channel.SendMessageAsync(null, false, $"{user2.Mention} not found!".QuickEmbed(Color.Red));
+                    return;
+                }
+
+                var player1Teams = db.TeamPlayers.AsQueryable().Where(x => x.ChannelId == Context.Channel.Id && user1.Id == x.UserId).ToHashSet();
+                var player2Teams = db.TeamPlayers.AsQueryable().Where(x => x.ChannelId == Context.Channel.Id && user2.Id == x.UserId).ToHashSet();
+
+                var gameResults = db.GameResults.AsQueryable().Where(x => x.LobbyId == Context.Channel.Id).ToHashSet();
+
+                var wins = 0;
+                var losses = 0;
+                var draws = 0;
+
+                // loop through lists
+                foreach (TeamPlayer team1 in player1Teams)
+                {
+                    foreach(TeamPlayer team2 in player2Teams)
+                    {
+                        //When the game number is the same between the teams and the teamnumber is the same, this means they were with eachother
+                        if (team1.GameNumber == team2.GameNumber && team1.TeamNumber == team2.TeamNumber)
+                        {
+                            GameResult gameResult = gameResults.FirstOrDefault(x => x.GameId == team1.GameNumber);
+
+                            if (gameResult == null)
+                            {
+                                await Context.Channel.SendMessageAsync(null, false, $"{user1.Mention} and {user2.Mention} have not played together".QuickEmbed(Color.Red));
+                                return;
+                            }
+
+                            if(gameResult.GameState != GameState.Canceled && gameResult.GameState != GameState.Undecided)
+                            {
+                                if (gameResult.WinningTeam == team1.TeamNumber)
+                                {
+                                    wins++;
+                                }
+                                else if (gameResult.WinningTeam == -1)
+                                {
+                                    draws++;
+                                }
+                                else
+                                {
+                                    losses++;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                await Context.Channel.SendMessageAsync(null, false, $"{user1.Mention} **with** {user2.Mention}\n\nWins: {wins}\nLosses: {losses}\nDraws: {draws}".QuickEmbed(Color.Blue));
+
+            }
+        }
+
+        //info
         [Command("Profile", RunMode = RunMode.Async)] // Please make default command name "Stats"
         [Alias("Info", "GetUser")]
         [Summary("Displays information about you or the specified user.")]
         [RequirePermission(PermissionLevel.Registered)]
-        public virtual async Task InfoAsync(SocketGuildUser user = null)
+        public virtual async Task TestInfoAsync(SocketGuildUser user = null)
         {
             if (user == null)
             {
@@ -219,19 +463,75 @@ namespace ELO.Modules
 
                 var ranks = db.Ranks.AsQueryable().Where(x => x.GuildId == Context.Guild.Id).ToList();
                 var maxRank = ranks.Where(x => x.Points < player.Points).OrderByDescending(x => x.Points).FirstOrDefault();
+                var nextRank = ranks.Where(x => x.Points > player.Points).OrderBy(x => x.Points).FirstOrDefault();
+
                 string rankStr = null;
+                string nextRankStr = null;
                 if (maxRank != null)
                 {
-                    rankStr = $"Rank: {MentionUtils.MentionRole(maxRank.RoleId)} ({maxRank.Points})\n";
+                    rankStr = $"Rank: {MentionUtils.MentionRole(maxRank.RoleId)} ({player.Points})\n";
+                }
+                if (nextRank != null)
+                {
+                    nextRankStr = $"Next Rank: {MentionUtils.MentionRole(nextRank.RoleId)} ({nextRank.Points - player.Points})\n";
                 }
 
-                var info = $"{player.GetDisplayNameSafe()} Stats\n" + // Use Title?
-                            $"Points: {player.Points}\n" +
+                var lobbyChannel = Context.Channel as SocketGuildChannel;
+
+                //Selects all game numbers player has participated in
+                var playerTeams = db.TeamPlayers.AsQueryable().Where(x => x.ChannelId == Context.Channel.Id && user.Id == x.UserId).ToHashSet();
+
+                //All game results of lobby
+                var gameResults = db.GameResults.AsQueryable().Where(x => x.LobbyId == Context.Channel.Id).ToHashSet();
+
+                var curWinStreak = 0;
+                var highWinStreak = 0;
+                var curLoseStreak = 0;
+                var highLoseStreak = 0;
+
+                foreach (var team in playerTeams)
+                {
+                    var gameid = team.GameNumber;
+
+                    var gameResult = gameResults.FirstOrDefault(x => x.GameId == gameid);
+
+                    var playerTeam = team.TeamNumber;
+
+                    if (gameResult.GameState != GameState.Canceled)
+                    {
+                        if (gameResult.WinningTeam == playerTeam)
+                        {
+                            curLoseStreak = 0;
+                            curWinStreak++;
+
+                            highWinStreak = curWinStreak > highWinStreak ? curWinStreak : highWinStreak;
+                        }
+                        else
+                        {
+                            //Is not winner nor is a tie (player lost)
+                            if (gameResult.WinningTeam != -1)
+                            {
+                                curLoseStreak++;
+                                highLoseStreak = curLoseStreak > highLoseStreak ? curLoseStreak : highLoseStreak;
+                            }
+                            curWinStreak = 0;
+                        }
+                    }
+                }
+
+                var info = $"**{player.GetDisplayNameSafe()}**\n" + // Use Title?
                             rankStr +
+                            nextRankStr +
                             $"Wins: {player.Wins}\n" +
                             $"Losses: {player.Losses}\n" +
                             $"Draws: {player.Draws}\n" +
-                            $"Games: {player.Games}\n";
+                            $"Games: {player.Games}\n" +
+                            $"Current Win Streak: {curWinStreak}\n" +
+                            $"Highest Win Streak: {highWinStreak}\n";
+
+                //Little gag for @WOW
+                info += user.Id == 292378911306809355 ? $"Current Loss Streak: {curLoseStreak}\n" : "";
+                info += user.Id == 292378911306809355 ? $"Highest Loss Streak: {highLoseStreak}\n" : "";
 
                 if (player.Kills > 0 || player.Deaths > 0)
                 {
@@ -242,7 +542,7 @@ namespace ELO.Modules
                         $"KDR: {kdr}\n";
                 }
 
-                info += $"Registered At: {player.RegistrationDate.ToString("dd MMM yyyy")} {player.RegistrationDate.ToShortTimeString()}";
+                //info += $"Registered At: {player.RegistrationDate.ToString("dd MMM yyyy")} {player.RegistrationDate.ToShortTimeString()}";
 
                 await Context.SimpleEmbedAsync(info, Color.Blue);
             }
@@ -251,6 +551,95 @@ namespace ELO.Modules
             //+ if they were on the winning team?
             //maybe only games with a decided result should be shown?
         }
+
+        [Command("ServerInfo")]
+        [Alias("sinfo", "server")]
+        [Summary("Ping server ingame player lists.")]
+        [RequirePermission(PermissionLevel.Moderator)]
+        [RateLimit(1, 60, Measure.Seconds, RateLimitFlags.ApplyPerGuild)]
+        public virtual async Task ServerInfoAsync(string ip, string username, string password)
+        {
+            WebRequest playerListRequest;
+            WebRequest serverInfoRequest;
+
+            playerListRequest = WebRequest.Create($"http://{ip}/live/players");
+            serverInfoRequest = WebRequest.Create($"http://{ip}/live/dashboard");
+            
+            playerListRequest.Credentials = new NetworkCredential(username, password);
+            serverInfoRequest.Credentials = new NetworkCredential(username, password);
+
+            playerListRequest.ContentType = "application/json";
+            serverInfoRequest.ContentType = "application/json";
+
+            playerListRequest.Method = "POST";
+            serverInfoRequest.Method = "POST";
+
+            using (var streamWriter = new StreamWriter(playerListRequest.GetRequestStream()))
+            {
+                string json = "{" + "\"Action\"" + ":" + "\"players_update\"" + "}";
+                streamWriter.Write(json);
+                streamWriter.Flush();
+
+            }
+
+            using (var streamWriter = new StreamWriter(serverInfoRequest.GetRequestStream()))
+            {
+                string json = "{" + "\"Action\"" + ":" + "\"status_get\"" + "}";
+                streamWriter.Write(json);
+                streamWriter.Flush();
+
+            }
+
+            WebResponse playerListResponse = playerListRequest.GetResponse();
+            WebResponse serverInfoResponse = serverInfoRequest.GetResponse();
+
+            Stream playerListStream = playerListResponse.GetResponseStream();
+
+            Stream serverInfoStream = serverInfoResponse.GetResponseStream();
+
+            JObject serverInfo = GetServerInfo(serverInfoStream);
+            JArray playerList = GetPlayerListArray(playerListStream);
+
+            playerListStream.Close();
+            serverInfoStream.Close();
+
+
+            //build player name string 
+            string playerListStr = null;
+            foreach (JObject player in playerList)
+            {
+                playerListStr += $"{player.GetValue("Name")}\n";
+            }
+
+
+            var ingameMaxPlayers = serverInfo.GetValue("MaxPlayers");
+            var ingameServerName = serverInfo.GetValue("ServerName");
+
+
+            var embed = new EmbedBuilder();
+
+            embed.Color = Color.Blue;
+            embed.Title = $"**{ingameServerName}**";
+            embed.Description = $"**{playerList.Count} / {ingameMaxPlayers}**\n\n" + playerListStr;
+
+            await Context.Message.DeleteAsync();
+            await ReplyAsync(null, false, embed.Build());
+        }
+
+        public JArray GetPlayerListArray(Stream dataStream)
+        {
+            StreamReader reader = new StreamReader(dataStream);
+
+            return JsonConvert.DeserializeObject<JArray>(reader.ReadToEnd());
+        }
+
+        public JObject GetServerInfo(Stream dataStream)
+        {
+            StreamReader reader = new StreamReader(dataStream);
+
+            return JsonConvert.DeserializeObject<JObject>(reader.ReadToEnd());
+        }
+
 
         [Command("Leaderboard", RunMode = RunMode.Async)]
         [Alias("lb", "top20")]
@@ -262,6 +651,7 @@ namespace ELO.Modules
         {
             return LeaderboardAsync(LeaderboardSortMode.points, page);
         }
+
 
         [Command("Leaderboard", RunMode = RunMode.Async)]
         [Alias("lb", "top20")]
@@ -289,6 +679,7 @@ namespace ELO.Modules
             {
                 //Retrieve players in the current guild from database
                 var users = db.Players.AsNoTracking().AsQueryable().Where(x => x.GuildId == Context.Guild.Id);
+                List<Rank> ranks = db.Ranks.AsQueryable().Where(x => x.GuildId == Context.Guild.Id).ToList();
                 int count = users.Count();
                 int pageSize = 20;
                 int skipCount = (page - 1) * pageSize;
@@ -337,7 +728,7 @@ namespace ELO.Modules
                 var embed = new EmbedBuilder();
                 embed.Title = $"{Context.Guild.Name} - Leaderboard [{page}]";
                 embed.Color = Color.Blue;
-                embed.Description = GetPlayerLines(players, skipCount + 1, mode);
+                embed.Description = GetPlayerLines(players, skipCount + 1, mode, ranks);
                 embed.WithFooter($"{count} users");
 
                 await ReplyAsync(null, false, embed.Build());
@@ -345,13 +736,47 @@ namespace ELO.Modules
         }
 
         //Returns the updated index and the formatted player lines
-        public string GetPlayerLines(Player[] players, int startValue, LeaderboardSortMode mode)
+        public string GetPlayerLines(Player[] players, int startValue, LeaderboardSortMode mode, List<Rank> ranks)
         {
-            var sb = new StringBuilder();
+            Rank playerRank = null;
+            Rank previousPlayerRank = null;
 
+            var sb = new StringBuilder();
+            
             //Iterate through the players and add their summary line to the list.
             foreach (var player in players)
             {
+                
+                playerRank = ranks.Where(x => x.Points < player.Points).OrderByDescending(x => x.Points).FirstOrDefault();
+
+                // Checks player if they have the "Ranked Scrim Participant" role to filter the leaderboard
+                var discord_user = Context.Client.GetGuild(player.GuildId).GetUser(player.UserId);
+                var has_role = false;
+
+                if (discord_user != null)
+                {
+                    foreach (IRole role in discord_user.Roles)
+                    {
+                        if (role.Name.Contains("Ranked Scrim Participant"))
+                        {
+                            has_role = true;
+                        }
+                    }
+
+                    if (!has_role)
+                    {
+                        //Skip adding the player if they don't have the role and role back the rank number to account for skipped player
+                        continue;
+                    }
+                }
+
+                //Label Player Ranks
+                if (playerRank != previousPlayerRank && playerRank != null)
+                {
+                    sb.AppendLine($"**-- {MentionUtils.MentionRole(playerRank.RoleId)} --**");
+                    previousPlayerRank = playerRank;
+                }    
+
                 switch (mode)
                 {
                     case LeaderboardSortMode.point:

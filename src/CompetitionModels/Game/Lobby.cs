@@ -49,6 +49,8 @@ namespace ELO.Models
         //public bool ReactOnJoinLeave { get; set; } = false;
         public bool HideQueue { get; set; } = false;
 
+        public bool IsLocked { get; set; } = false;
+
         public int PlayersPerTeam { get; set; } = 5;
 
         public PickMode TeamPickMode { get; set; } = PickMode.Random;

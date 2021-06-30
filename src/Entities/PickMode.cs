@@ -6,6 +6,8 @@
         Captains_RandomHighestRanked,
         Captains_Random,
         Random,
-        TryBalance
+        TryBalance,
+        TryBalanceTest,
+        NonCompetitive
     }
 }

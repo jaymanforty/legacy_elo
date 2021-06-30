@@ -127,6 +127,7 @@ namespace ELO.Preconditions
                         return PreconditionResult.FromError("You must be the server owner in order to run this command.");
                     }
                 }
+                
             }
 
             return PreconditionResult.FromError($"You do not have permission to run this command. Level: {Level}");

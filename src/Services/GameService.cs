@@ -53,6 +53,21 @@ namespace ELO.Services
                 var queue = db.GetQueuedPlayers(game.GuildId, game.LobbyId).Select(x => x.UserId).ToArray();
                 var team1p = db.GetTeamFull(game, 1);
                 var team2p = db.GetTeamFull(game, 2);
+                int team1points = 0;
+                int team2points = 0;
+
+                //get objects for embed to use to get total elo of team
+                List<Player> team1pobj = new List<Player> { };
+                List<Player> team2pobj = new List<Player> { };
+
+                foreach(ulong playerid in team1p)
+                {
+                    team1pobj.Add(db.GetUser(game.GuildId, playerid));
+                }
+                foreach(ulong playerid in team2p)
+                {
+                    team2pobj.Add(db.GetUser(game.GuildId, playerid));
+                }
 
                 var message = usermentions ? string.Join(" ", queue.Union(team1p).Union(team2p).Distinct().Select(x => MentionUtils.MentionUser(x))) : "";
 
@@ -135,12 +150,14 @@ namespace ELO.Services
 
                 if (team1)
                 {
-                    embed.AddField("Team 1", GetTeamInfo(cap1, team1p));
+                    team1points = team1pobj.Sum(x => x.Points);
+                    embed.AddField($"Team 1: {team1points}", GetTeamInfo(cap1, team1p));
                 }
 
                 if (team2)
                 {
-                    embed.AddField("Team 2", GetTeamInfo(cap2, team2p));
+                    team2points = team2pobj.Sum(x => x.Points);
+                    embed.AddField($"Team 2: {team2points}", GetTeamInfo(cap2, team2p));
                 }
 
                 if (remainingPlayers)
@@ -150,6 +167,15 @@ namespace ELO.Services
                     {
                         embed.AddField("Remaining Players", string.Join(" ", remaining.Select(x => MentionUtils.MentionUser(x))));
                     }
+                }
+
+                if (team1points == 0 && team2points == 0)
+                {
+                    desc += $"**Difference**: None";
+                }
+                else
+                {
+                    desc += $"**Difference**: {Math.Abs(team1points - team2points)}\n";
                 }
 
                 embed.Description = desc;
@@ -248,14 +274,37 @@ namespace ELO.Services
                 }
             }
 
-            if (team1)
+            using (var db = new Database())
             {
-                embed.AddField("Team 1", GetTeamInfo(null, team1p));
-            }
 
-            if (team2)
-            {
-                embed.AddField("Team 2", GetTeamInfo(null, team2p));
+                List<Player> team1pobj = new List<Player> { };
+                List<Player> team2pobj = new List<Player> { };
+                int team1points = 0;
+                int team2points = 0;
+
+                foreach(ulong playerid in team1p)
+                {
+                    team1pobj.Add(db.GetUser(game.GuildId, playerid));
+                }
+                foreach (ulong playerid in team2p)
+                {
+                    team2pobj.Add(db.GetUser(game.GuildId, playerid));
+                }
+
+                team1points = team1pobj.Sum(x => x.Points);
+                team2points = team2pobj.Sum(x => x.Points);
+
+                desc += $"Difference: {Math.Abs(team1points - team2points)}\n";
+
+                if (team1)
+                {
+                    embed.AddField($"Team 1: {team1points}", GetTeamInfo(null, team1p));
+                }
+
+                if (team2)
+                {
+                    embed.AddField($"Team 2: {team2points}", GetTeamInfo(null, team2p));
+                }
             }
 
             if (remainingPlayers)

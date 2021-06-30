@@ -6,7 +6,6 @@ using ELO.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using ELO.Extensions;
 
@@ -73,6 +72,14 @@ namespace ELO.Services
             using (var db = new Database())
             {
                 lobby = db.Lobbies.Find(lobby.ChannelId);
+
+                //Handles NonCompetitive Lobbies
+                if (lobby.TeamPickMode == PickMode.NonCompetitive)
+                {
+                    await context.Channel.SendMessageAsync("", false, "Queue is full... Good Luck and Have Fun!".QuickEmbed(Color.Blue));
+                    return;
+                }
+
                 await context.Channel.SendMessageAsync("", false, "Queue is full. Picking teams...".QuickEmbed(Color.Blue));
 
                 //Increment the game counter as there is now a new game.
@@ -274,28 +281,221 @@ namespace ELO.Services
                     case PickMode.TryBalance:
                         game.GameState = GameState.Undecided;
 
-                        var balPlayers = queue.Select(x => db.Players.Find(context.Guild.Id, x.UserId)).Where(x => x != null).ToList();
+                        List<Player> balPlayers = queue.Select(x => db.Players.Find(context.Guild.Id, x.UserId)).Where(x => x != null).ToList();
                         int difference = int.MaxValue;
                         int t1Count = balPlayers.Count / 2;
-                        List<Player> balancedT1 = balPlayers.Take(t1Count).ToList();
-                        List<Player> balancedT2 = balPlayers.Skip(t1Count).ToList();
-                        for (int i = 0; i < 5; i++)
-                        {
-                            var tempSet = balPlayers.OrderBy(x => Random.Next()).ToList();
+                        int topRankTracker = 0;
+                        int secondRankTracker = 0;
+                        Player topRankedPlayer = balPlayers.First();
+                        Player secondRankedPlayer = balPlayers.ElementAt(1);
 
-                            var t1Members = tempSet.Take(t1Count).ToList();
-                            var t2Members = tempSet.Skip(t1Count).ToList();
+                        //Get the top ranked player obj 
+                        foreach(Player p in balPlayers)
+                        {
+                            if (p.Points >= topRankTracker)
+                            {
+                                topRankTracker = p.Points;
+                                topRankedPlayer = p;
+                            }
+                        }
+
+                        //Get the second from top ranked player (#2)
+                        foreach(Player p in balPlayers)
+                        {
+                            if (p.Points <= topRankTracker && p.Points >= secondRankTracker)
+                            {
+                                secondRankTracker = p.Points;
+                                secondRankedPlayer = p;
+                            }
+                        }
+
+                        IEnumerable<Player[]> combs = Combinations.CombinationsRosettaWoRecursion(balPlayers.ToArray(), t1Count);
+
+                        //Slice list in half for all team1 combos
+                        combs = combs.Take(combs.ToList().Count / 2);
+
+                        Player[] balancedT1 = combs.First();
+                        Player[] balancedT2 = combs.ElementAt(1);
+                        Player[][] balancedTeams = Array.Empty<Player[]>();
+
+
+                        //Find the best possible score and assign team variables
+                        foreach(Player[] team in combs)
+                        {
+                            var t1Members = (Player[])team.Clone(); //clone the array to avoid balancedt1 getting updated with 'team' variable
+                            var t2Members = balPlayers.Except(team).ToArray();
 
                             int t1Sum = t1Members.Sum(x => x.Points);
                             int t2Sum = t2Members.Sum(x => x.Points);
                             int dif = Math.Abs(t1Sum - t2Sum);
+
                             if (dif < difference)
                             {
+                                difference = dif;
                                 balancedT1 = t1Members;
                                 balancedT2 = t2Members;
+                            }
+                        }
+
+
+                        foreach (var balMem in balancedT1)
+                        {
+                            db.TeamPlayers.Add(new TeamPlayer
+                            {
+                                GuildId = context.Guild.Id,
+                                ChannelId = lobby.ChannelId,
+                                UserId = balMem.UserId,
+                                GameNumber = game.GameId,
+                                TeamNumber = 1
+                            });
+                        }
+                        foreach (var balMem in balancedT2)
+                        {
+                            db.TeamPlayers.Add(new TeamPlayer
+                            {
+                                GuildId = context.Guild.Id,
+                                ChannelId = lobby.ChannelId,
+                                UserId = balMem.UserId,
+                                GameNumber = game.GameId,
+                                TeamNumber = 2
+                            });
+                        }
+
+                        /*
+
+                        //0-0
+                        //1-0
+                        //1-1
+                        //2-1
+                        //2-2
+                        //...
+
+                        foreach (var user in ordered)
+                        {
+                            if (t1Added.Count <= t2Added.Count)
+                            {
+                                db.TeamPlayers.Add(new TeamPlayer
+                                {
+                                    GuildId = context.Guild.Id,
+                                    ChannelId = lobby.ChannelId,
+                                    UserId = user.UserId,
+                                    GameNumber = game.GameId,
+                                    TeamNumber = 1
+                                });
+                                t1Added.Add(user.UserId);
+                            }
+                            else
+                            {
+                                db.TeamPlayers.Add(new TeamPlayer
+                                {
+                                    GuildId = context.Guild.Id,
+                                    ChannelId = lobby.ChannelId,
+                                    UserId = user.UserId,
+                                    GameNumber = game.GameId,
+                                    TeamNumber = 2
+                                });
+                                t2Added.Add(user.UserId);
+                            }
+                        }
+                        */
+                        db.QueuedPlayers.RemoveRange(queue);
+
+                        break;
+
+                        //Testing trybalance but with priotizing splitting up the top two ranked players
+                    case PickMode.TryBalanceTest:
+                        game.GameState = GameState.Undecided;
+
+                        balPlayers = queue.Select(x => db.Players.Find(context.Guild.Id, x.UserId)).Where(x => x != null).ToList();
+                        difference = int.MaxValue;
+                        t1Count = balPlayers.Count / 2;
+                        topRankTracker = 0;
+                        secondRankTracker = 0;
+                        topRankedPlayer = balPlayers.First();
+                        secondRankedPlayer = balPlayers.ElementAt(1);
+
+                        //Get the top ranked player obj 
+                        foreach (Player p in balPlayers)
+                        {
+                            if (p.Points >= topRankTracker)
+                            {
+                                topRankTracker = p.Points;
+                                topRankedPlayer = p;
+                            }
+                        }
+
+                        //Get the second from top ranked player (#2)
+                        foreach (Player p in balPlayers)
+                        {
+                            if (p.Points <= topRankTracker && p.Points >= secondRankTracker)
+                            {
+                                secondRankTracker = p.Points;
+                                secondRankedPlayer = p;
+                            }
+                        }
+
+                        combs = Combinations.CombinationsRosettaWoRecursion(balPlayers.ToArray(), t1Count);
+
+                        //Slice list in half for all team1 combos
+                        combs = combs.Take(combs.ToList().Count / 2);
+
+                        balancedT1 = combs.First();
+                        balancedT2 = combs.ElementAt(1);
+                        balancedTeams = Array.Empty<Player[]>();
+
+
+                        //Find the best possible score
+                        foreach (Player[] team in combs)
+                        {
+                            var t1Members = (Player[])team.Clone(); //clone the array to avoid balancedt1 getting updated with 'team' variable
+                            var t2Members = balPlayers.Except(team).ToArray();
+
+                            int t1Sum = t1Members.Sum(x => x.Points);
+                            int t2Sum = t2Members.Sum(x => x.Points);
+                            int dif = Math.Abs(t1Sum - t2Sum);
+
+                            if (dif < difference)
+                            {
                                 difference = dif;
                             }
                         }
+
+
+                        //Find all the best teams (only stores team1 as we can subtract team1 from a total list of players) 
+                        foreach (Player[] team in combs)
+                        {
+                            var t1Members = (Player[])team.Clone(); //clone the array to avoid balancedt1 getting updated with 'team' variable
+                            var t2Members = balPlayers.Except(team).ToArray();
+
+                            int t1Sum = t1Members.Sum(x => x.Points);
+                            int t2Sum = t2Members.Sum(x => x.Points);
+                            int dif = Math.Abs(t1Sum - t2Sum);
+
+                            if (dif < difference)
+                            {
+                                //Assign balancedT1/T2 variable
+                                //will later on be checked to see if team combinations with lowest difference and splitting up top two ranked players are present
+                                balancedT1 = t1Members;
+                                balancedT2 = t2Members;
+                                balancedTeams.Append(t1Members);
+                            }
+                        }
+
+
+                        //prioritize teams that have the top two ranked players split up
+                        foreach (Player[] team in balancedTeams)
+                        {
+                            var t1Members = (Player[])team.Clone();
+                            var t2Members = balPlayers.Except(team).ToArray();
+
+                            // If t1Members or t2Members DOES NOT contain both of the top two ranked players then reassign the balancedT1/T2 variables
+                            if (!(t1Members.Contains(topRankedPlayer) && t1Members.Contains(secondRankedPlayer)) || !(t2Members.Contains(topRankedPlayer) && t2Members.Contains(secondRankedPlayer)))
+                            {
+                                balancedT1 = t1Members;
+                                balancedT1 = t2Members;
+                            }
+                        }
+
 
                         foreach (var balMem in balancedT1)
                         {
@@ -364,7 +564,7 @@ namespace ELO.Services
 
                 db.SaveChanges();
 
-                if (lobby.TeamPickMode == PickMode.TryBalance || lobby.TeamPickMode == PickMode.Random)
+                if (lobby.TeamPickMode == PickMode.TryBalance || lobby.TeamPickMode == PickMode.Random || lobby.TeamPickMode == PickMode.TryBalanceTest)
                 {
                     var res = GameService.GetGameMessage(game, $"Game #{game.GameId} Started",
                             GameFlag.lobby,

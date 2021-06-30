@@ -155,6 +155,11 @@ namespace ELO.Services
             return QueuedPlayers.AsQueryable().Where(x => x.GuildId == guildId && x.ChannelId == channelId);
         }
 
+        public IEnumerable<QueuedPlayer> GetAllQueuedPlayers()
+        {
+            return QueuedPlayers.AsQueryable().Where(x => x.GuildId != 0); //Always true or will get all the queued players
+        }
+
         public IEnumerable<QueuedPlayer> GetQueue(GameResult game)
         {
             return QueuedPlayers.AsQueryable().Where(x => x.GuildId == game.GuildId && x.ChannelId == game.LobbyId);
@@ -168,6 +173,11 @@ namespace ELO.Services
         public IEnumerable<ScoreUpdate> GetScoreUpdates(ulong guildId, ulong channelId, int gameNumber)
         {
             return ScoreUpdates.AsQueryable().Where(x => x.GuildId == guildId && x.ChannelId == channelId && x.GameNumber == gameNumber);
+        }
+
+        public ScoreUpdate GetScoreUpdate(ulong guildId, ulong channelId, int gameNumber, ulong userId)
+        {
+            return ScoreUpdates.FirstOrDefault(x => x.GuildId == guildId && x.ChannelId == channelId && x.GameNumber == gameNumber && x.UserId == userId);
         }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

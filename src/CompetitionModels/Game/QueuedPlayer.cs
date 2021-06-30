@@ -16,5 +16,6 @@ namespace ELO.Models
         public ulong ChannelId { get; set; }
 
         public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
+        public DateTime ExpireAt { get; set; } = DateTime.UtcNow.AddHours(2.0); //TODO: Configurable default timeout
     }
 }

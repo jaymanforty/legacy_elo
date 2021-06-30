@@ -198,25 +198,7 @@ namespace ELO.Services
 
         public bool IsPremiumSimple(ulong guildId)
         {
-            lock (bpcLock)
-            {
-                if (basicPremiumCache.TryGetValue(guildId, out var requestCount))
-                {
-                    // 0,10,20..
-                    if (requestCount.Item1 % 10 == 0)
-                    {
-                        requestCount.Item2 = IsPremium(guildId);
-                    }
-                    basicPremiumCache[guildId] = (requestCount.Item1 + 1, requestCount.Item2);
-                    return requestCount.Item2;
-                }
-                else
-                {
-                    var isPrem = IsPremium(guildId);
-                    basicPremiumCache.Add(guildId, (1, isPrem));
-                    return isPrem;
-                }
-            }
+            return true;
         }
 
         private int cacheRefreshCheck = 0;
@@ -480,13 +462,13 @@ namespace ELO.Services
 
         public class Config
         {
-            public bool Enabled { get; set; } = true;
+            public bool Enabled { get; set; } = false;
 
             public ulong GuildId { get; set; }
 
-            public int DefaultLimit { get; set; } = 20;
+            public int DefaultLimit { get; set; } = int.MaxValue;
 
-            public int LobbyLimit { get; set; } = 3;
+            public int LobbyLimit { get; set; } = int.MaxValue;
 
             public int ServerLimit { get; set; } = 3;
 
